@@ -312,7 +312,7 @@ It combines:
 
 GitHub: [@shivdhiksh](https://github.com/shivdhiksh)
 
-Linkdin: [Shiva Dhikshith Koppu](www.linkedin.com/in/shivdhiksh)
+Linkdin: [shivdhiksh](www.linkedin.com/in/shivdhiksh)
 
 
 This project is currently provided for educational and personal use.
