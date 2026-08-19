@@ -312,6 +312,7 @@ It combines:
 
 GitHub: [@shivdhiksh](https://github.com/shivdhiksh)
 
-## 📄 License
+Linkdin: [Shiva Dhikshith Koppu](www.linkedin.com/in/shivdhiksh)
+
 
 This project is currently provided for educational and personal use.
