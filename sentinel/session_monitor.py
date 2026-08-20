@@ -16,13 +16,27 @@ from .config import BASE_DIR, logger, sanitize
 from .telegram import send_telegram_alert
 
 # Win32 Constants
+WM_CREATE = 0x0001
+WM_DESTROY = 0x0002
+WM_CLOSE = 0x0010
+WM_QUERYENDSESSION = 0x0011
+WM_QUIT = 0x0012
+WM_ENDSESSION = 0x0016
 WM_WTSSESSION_CHANGE = 0x02B1
+
 WTS_SESSION_LOCK = 0x7
 WTS_SESSION_UNLOCK = 0x8
 NOTIFY_FOR_THIS_SESSION = 0
 ERROR_ALREADY_EXISTS = 183
 WS_EX_TOOLWINDOW = 0x00000080
 WS_POPUP = 0x80000000
+
+CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+CREATE_NO_WINDOW = 0x08000000
+DETACHED_PROCESS = 0x00000008
+CREATE_NEW_PROCESS_GROUP = 0x00000200
+
+CLASS_NAME = "SentinelSessionMonitorWindowClass_v03"
 
 # 64-bit Win32 Types
 LRESULT = ctypes.c_ssize_t
@@ -108,23 +122,28 @@ class SessionMonitor:
         self.last_state: Optional[str] = None
         self.running = False
         self._wnd_proc_ref = None
+        self._wnd_class_ref = None
 
     def _acquire_mutex(self) -> bool:
         """Ensures only a single instance of the session monitor runs per user session."""
         username = os.getenv("USERNAME", "DefaultUser")
         mutex_name = f"SentinelSessionMonitor_{username}"
         self.mutex = kernel32.CreateMutexW(None, True, mutex_name)
-        if ctypes.GetLastError() == ERROR_ALREADY_EXISTS:
-            logger.info("Sentinel Session Monitor is already active in this session.")
+        err = ctypes.GetLastError()
+        if err == ERROR_ALREADY_EXISTS:
+            logger.info(f"Sentinel Session Monitor mutex '{mutex_name}' already active (Error: {err}). Exiting duplicate.")
             return False
+        logger.info(f"Sentinel Session Monitor acquired mutex '{mutex_name}' (Handle: {self.mutex})")
         return True
 
     def _window_proc(self, hwnd: int, msg: int, wparam: int, lparam: int) -> int:
         try:
             if msg == WM_WTSSESSION_CHANGE:
+                logger.info(f"Received WM_WTSSESSION_CHANGE with wparam={wparam}")
                 if wparam == WTS_SESSION_LOCK:
                     if self.last_state != "lock":
                         self.last_state = "lock"
+                        logger.info("Triggering lock notification...")
                         try:
                             send_telegram_alert("lock")
                         except Exception as exc:
@@ -132,10 +151,23 @@ class SessionMonitor:
                 elif wparam == WTS_SESSION_UNLOCK:
                     if self.last_state != "unlock":
                         self.last_state = "unlock"
+                        logger.info("Triggering unlock notification...")
                         try:
                             send_telegram_alert("unlock")
                         except Exception as exc:
                             logger.error(f"Error dispatching unlock notification: {sanitize(str(exc))}")
+                return 0
+            elif msg == WM_CLOSE:
+                logger.info("Received WM_CLOSE - ignoring to keep daemon active.")
+                return 0
+            elif msg == WM_QUERYENDSESSION:
+                logger.info("Received WM_QUERYENDSESSION - returning TRUE.")
+                return 1
+            elif msg == WM_ENDSESSION:
+                logger.info(f"Received WM_ENDSESSION with wparam={wparam}")
+                return 0
+            elif msg == WM_DESTROY:
+                logger.info("Received WM_DESTROY.")
                 return 0
         except Exception as exc:
             logger.error(f"Error in Win32 window procedure: {sanitize(str(exc))}")
@@ -145,39 +177,40 @@ class SessionMonitor:
     def start(self):
         """Initializes the Win32 message window and starts the event loop."""
         if not self._acquire_mutex():
-            logger.info("Mutex acquisition returned False, exiting.")
             return
 
         self.running = True
         h_inst = kernel32.GetModuleHandleW(None)
-        class_name = f"SentinelSessionMonitorClass_{int(time.time())}"
 
         self._wnd_proc_ref = WNDPROC(self._window_proc)
 
-        wnd_class = WNDCLASSEXW()
-        wnd_class.cbSize = ctypes.sizeof(WNDCLASSEXW)
-        wnd_class.style = 0
-        wnd_class.lpfnWndProc = self._wnd_proc_ref
-        wnd_class.cbClsExtra = 0
-        wnd_class.cbWndExtra = 0
-        wnd_class.hInstance = h_inst
-        wnd_class.hIcon = None
-        wnd_class.hCursor = None
-        wnd_class.hbrBackground = None
-        wnd_class.lpszMenuName = None
-        wnd_class.lpszClassName = class_name
-        wnd_class.hIconSm = None
+        self._wnd_class_ref = WNDCLASSEXW()
+        self._wnd_class_ref.cbSize = ctypes.sizeof(WNDCLASSEXW)
+        self._wnd_class_ref.style = 0
+        self._wnd_class_ref.lpfnWndProc = self._wnd_proc_ref
+        self._wnd_class_ref.cbClsExtra = 0
+        self._wnd_class_ref.cbWndExtra = 0
+        self._wnd_class_ref.hInstance = h_inst
+        self._wnd_class_ref.hIcon = None
+        self._wnd_class_ref.hCursor = None
+        self._wnd_class_ref.hbrBackground = None
+        self._wnd_class_ref.lpszMenuName = None
+        self._wnd_class_ref.lpszClassName = CLASS_NAME
+        self._wnd_class_ref.hIconSm = None
 
-        reg_res = user32.RegisterClassExW(ctypes.byref(wnd_class))
+        reg_res = user32.RegisterClassExW(ctypes.byref(self._wnd_class_ref))
         if not reg_res:
             err = ctypes.GetLastError()
-            logger.error(f"Failed to register Win32 window class (Error: {err})")
-            return
+            # If class already registered from earlier instance in same process, proceed
+            if err != 1410:  # ERROR_CLASS_ALREADY_EXISTS
+                logger.error(f"Failed to register Win32 window class (Error: {err})")
+                return
+        logger.info(f"Registered Win32 window class '{CLASS_NAME}' (Atom: {reg_res})")
 
         # Create a top-level hidden tool window for WTS session notifications
         self.hwnd = user32.CreateWindowExW(
             WS_EX_TOOLWINDOW,
-            class_name,
+            CLASS_NAME,
             "SentinelSessionMonitorWindow",
             WS_POPUP,
             0, 0, 0, 0,
@@ -191,6 +224,7 @@ class SessionMonitor:
             err = ctypes.GetLastError()
             logger.error(f"Failed to create Win32 message window (Error: {err})")
             return
+        logger.info(f"Created hidden Win32 window (HWND: {self.hwnd})")
 
         # Register for WTS session notifications
         wts_res = wtsapi32.WTSRegisterSessionNotification(
@@ -201,22 +235,22 @@ class SessionMonitor:
             err = ctypes.GetLastError()
             logger.error(f"Failed to register WTS session notifications (Error: {err})")
             return
-
-        logger.info(f"Sentinel Session Monitor daemon active. HWND: {self.hwnd}")
+        logger.info(f"WTSRegisterSessionNotification success (Result: {wts_res})")
 
         msg = wintypes.MSG()
         while self.running:
             res = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
             if res == 0:  # WM_QUIT
-                logger.error("GetMessageW received WM_QUIT")
+                logger.info("GetMessageW received WM_QUIT (0)")
                 break
             elif res == -1:
-                logger.error(f"GetMessage error: {ctypes.GetLastError()}")
+                err = ctypes.GetLastError()
+                logger.error(f"GetMessageW error: {err}")
                 break
             user32.TranslateMessage(ctypes.byref(msg))
             user32.DispatchMessageW(ctypes.byref(msg))
 
-        logger.error("SessionMonitor loop terminated.")
+        logger.info("SessionMonitor message loop exited.")
 
         # Cleanup on termination
         if self.hwnd:
@@ -231,38 +265,49 @@ class SessionMonitor:
         """Stops the event loop."""
         self.running = False
         if self.hwnd:
-            user32.PostMessageW(self.hwnd, 0x0012, 0, 0)  # WM_QUIT
+            user32.PostMessageW(self.hwnd, WM_QUIT, 0, 0)
 
 def ensure_session_monitor_running():
     """
-    Spawns session_monitor silently in background using the proven silent_runner wrapper.
+    Spawns session_monitor silently in background as an independent detached process,
+    breaking away from any Task Scheduler Job Objects.
     """
     try:
-        vbs_path = BASE_DIR / "silent_runner.vbs"
-        if vbs_path.exists():
-            subprocess.Popen(
-                ["wscript.exe", str(vbs_path), "session_monitor"],
-                cwd=str(BASE_DIR),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-            )
-        else:
-            pythonw_path = sys.executable.replace("python.exe", "pythonw.exe")
-            if not Path(pythonw_path).exists():
-                pythonw_path = "pythonw.exe"
-            script_path = str(BASE_DIR / "power_monitor.py")
+        pythonw_path = sys.executable.replace("python.exe", "pythonw.exe")
+        if not Path(pythonw_path).exists():
+            pythonw_path = "pythonw.exe"
+        
+        script_path = str(BASE_DIR / "power_monitor.py")
+        creation_flags = (
+            DETACHED_PROCESS |
+            CREATE_NEW_PROCESS_GROUP |
+            CREATE_BREAKAWAY_FROM_JOB |
+            CREATE_NO_WINDOW
+        )
+        
+        subprocess.Popen(
+            [pythonw_path, script_path, "session_monitor"],
+            cwd=str(BASE_DIR),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creation_flags
+        )
+        logger.info("Spawned session_monitor with CREATE_BREAKAWAY_FROM_JOB.")
+    except Exception as exc:
+        # If breakaway from job fails (e.g. nested job restrictions), fallback without breakaway
+        try:
             subprocess.Popen(
                 [pythonw_path, script_path, "session_monitor"],
                 cwd=str(BASE_DIR),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+                creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
             )
-    except Exception as exc:
-        logger.warning(f"Could not auto-start session monitor: {sanitize(str(exc))}")
+            logger.info("Spawned session_monitor with fallback creation flags.")
+        except Exception as exc2:
+            logger.warning(f"Could not auto-start session monitor: {sanitize(str(exc2))}")
 
 def run_session_monitor():
     monitor = SessionMonitor()
