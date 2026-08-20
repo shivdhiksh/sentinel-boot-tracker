@@ -1,318 +1,259 @@
 # 🛡️ Sentinel Boot Tracker
 
-A lightweight Windows laptop monitoring tool that sends real-time **Telegram notifications** when a laptop starts up or shuts down.
+A lightweight, intelligent Windows laptop power and activity monitoring system that sends real-time **Telegram notifications** enriched with network, battery, and approximate location telemetry upon system startup and shutdown.
 
-The project is designed to provide a simple personal security and activity-monitoring mechanism for a Windows computer.
+---
 
 ## 🚀 Project Overview
 
-**Sentinel Boot Tracker** monitors important Windows power events and sends an alert directly to the user's Telegram account.
+**Sentinel Boot Tracker** (v0.3 — *Sentinel Intelligence*) monitors Windows power events and delivers rich telemetry alerts directly to your Telegram.
 
-The current implementation uses:
-
-* 🐍 Python for the monitoring logic
-* 🤖 Telegram Bot API for notifications
-* 🪟 Windows Task Scheduler for automation
-* 📜 VBScript for silent background execution
-* 🔐 `.env` for secure credential configuration
-
-### Current workflow
+It pairs low-overhead Windows automation with resilient Python telemetry collection to provide instant situational awareness whenever your laptop boots up or initiates a shutdown.
 
 ```text
-Windows Laptop
-      │
-      ├── Startup
-      │
-      ▼
-Windows Task Scheduler
-      │
-      ▼
-silent_runner.vbs
-      │
-      ▼
-power_monitor.py
-      │
-      ▼
-Telegram Bot API
-      │
-      ▼
-📱 Telegram Notification
+  Windows Laptop (ASUS TUF A15)
+               │
+      ┌────────┴────────┐
+      ▼                 ▼
+   Startup          Shutdown (Event 1074)
+      │                 │
+      ▼                 ▼
+ Task Scheduler    Task Scheduler (SYSTEM)
+      │                 │
+      └────────┬────────┘
+               ▼
+       silent_runner.vbs
+               │
+               ▼
+       power_monitor.py
+               │
+               ▼
+       sentinel/ package
+   ├── system_info (OS, User, Battery %)
+   ├── network (Public IP, Approx Location)
+   └── telegram (Retry loops, HTML formatting)
+               │
+               ▼
+        Telegram Bot API
+               │
+               ▼
+      📱 Telegram Notification
 ```
+
+---
 
 ## ✨ Features
 
-### Currently implemented
+### 🚀 Sentinel v0.3 Intelligence (New)
+* 🌐 **Public IP Detection:** Automated multi-provider IP resolution (`ipapi.co` $\rightarrow$ `ip-api.com` $\rightarrow$ `ipify.org`).
+* 📍 **Approximate Geolocation:** City, Region, and Country mapping based on public IP routing.
+* 🗺️ **Dynamic Google Maps Link:** Direct map coordinates URL generated when latitude/longitude coordinates are available.
+* 🔋 **Battery & Power Telemetry:** Real-time battery percentage tracking and AC adapter status (`AC` vs `Battery`).
+* 💻 **System Metadata:** Gathers device hostname, Windows version, active username, and Python runtime version.
+* 🏛️ **Modular Package Architecture:** Clean separation of concerns into a dedicated `sentinel/` package while maintaining seamless entry-point compatibility.
 
-* ✅ Telegram Bot API integration
-* ✅ Startup notification
-* ✅ Shutdown notification through the Python command
-* ✅ Silent background execution using VBScript
-* ✅ Python 3.13 support
-* ✅ Automatic `.env` loading
-* ✅ Startup network retry mechanism
-* ✅ Shutdown retry mechanism
-* ✅ Error logging
-* ✅ Telegram token sanitization in logs
-* ✅ Dynamic project path resolution
-* ✅ Windows Task Scheduler startup automation
-* ✅ No console window when using the silent runner
-* ✅ Sensitive `.env` file excluded from Git
+### 🛡️ Core Reliability & Security Baseline
+* 🤖 **Telegram Bot API Integration:** Instant alerts with rich HTML formatting and emoji indicators.
+* 🔕 **Silent Background Execution:** Zero-console popup wrapper using Windows VBScript (`wscript.exe`).
+* 🪟 **Automated Event Triggers:**
+  * **Startup:** Automatic execution on Windows user login via Windows Task Scheduler.
+  * **Shutdown:** Automatic execution on Windows Event ID 1074 (User32 shutdown) running with SYSTEM privileges.
+* 🌐 **Network Resilience:** Multi-attempt retry mechanisms (up to 10 attempts for startup, 3 for shutdown) with backoff intervals to handle delayed Wi-Fi connections.
+* 🔒 **Token Sanitization:** Automatically redacts sensitive Telegram Bot tokens from error logs and console outputs.
+* 🔐 **Secure Credential Isolation:** All secrets reside in local `.env` files strictly excluded from source control.
 
-### In development
+---
 
-* 🚧 Automatic Windows shutdown event detection
-* 🚧 Restart detection
-* 🚧 Sleep/wake detection
-* 🚧 Improved event history
-* 🚧 Installation/setup automation
-* 🚧 Extended system information
+## 📍 Approximate Location Notice
 
-## 🏗️ Project Structure
+> [!NOTE]
+> Standard laptops do not possess built-in hardware GPS receivers. All location telemetry is derived from **Public IP Geolocation** provided by upstream network routing tables and ISPs.
+> 
+> * Location data is labeled strictly as **"Approximate Location"**.
+> * If IP geolocation fails or is unreachable, the core notification continues to dispatch gracefully with `Unavailable` markers.
+
+---
+
+## 🏗️ Project Architecture
 
 ```text
 sentinel-boot-tracker/
 │
-├── .env.example          # Environment variable template
-├── .gitignore            # Files excluded from Git
-├── power_monitor.py      # Core Telegram notification logic
-├── requirements.txt      # Python dependencies
-├── silent_runner.vbs     # Silent Windows execution wrapper
+├── sentinel/                     # Modular Sentinel Engine
+│   ├── __init__.py               # Package metadata and version info (0.3.0)
+│   ├── config.py                 # Environment variables, logging, token sanitization
+│   ├── system_info.py            # Battery status, OS, username, and device info
+│   ├── network.py                # Public IP detection & approximate IP geolocation
+│   ├── notifications.py          # HTML message builder and visual formatters
+│   └── telegram.py               # Telegram API client with resilient retry loops
 │
-└── .env                  # Local credentials - NOT committed
+├── power_monitor.py              # CLI entry point (preserves legacy interface)
+├── silent_runner.vbs             # Silent VBScript wrapper for background execution
+├── requirements.txt              # Python package dependencies
+├── .env.example                  # Environment configuration template
+├── .gitignore                    # Git exclusion rules
+│
+├── .env                          # Local credentials (NEVER committed)
+└── error.log                     # Local error logs (NEVER committed)
 ```
+
+---
 
 ## ⚙️ Requirements
 
-* Windows 10/11
-* Python 3.13+
-* Telegram account
-* Telegram bot
-* Internet connection
+* **Operating System:** Windows 10 / 11 (64-bit)
+* **Python:** Python 3.13+ (or 3.10+)
+* **Dependencies:** `requests`, `python-dotenv`, `psutil`
+* **Accounts:** Telegram account and a Telegram Bot token via BotFather
 
-## 📦 Installation
+---
 
-Clone the repository:
+## 📦 Installation & Setup
 
-```bash
-git clone https://github.com/shivdhiksh/sentinel-boot-tracker.git
-cd sentinel-boot-tracker
-```
+1. **Clone the Repository:**
+   ```powershell
+   git clone https://github.com/shivdhiksh/sentinel-boot-tracker.git
+   cd sentinel-boot-tracker
+   ```
 
-Install the Python dependencies:
+2. **Install Dependencies:**
+   ```powershell
+   py -m pip install -r requirements.txt
+   ```
 
-```powershell
-py -m pip install -r requirements.txt
-```
+3. **Configure Environment Credentials:**
+   Create a `.env` file in the project root based on `.env.example`:
+   ```env
+   TELEGRAM_BOT_TOKEN="123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ"
+   TELEGRAM_CHAT_ID="987654321"
+   ```
 
-## 🤖 Telegram Bot Setup
+---
 
-Create a Telegram bot using **BotFather**.
+## 🧪 Testing & Execution
 
-After creating the bot, obtain:
+### 1. Direct Python Testing
+Run manual tests from PowerShell or Command Prompt:
 
-* Telegram Bot Token
-* Telegram Chat ID
+* **Startup Notification:**
+  ```powershell
+  py power_monitor.py startup
+  ```
 
-Create a `.env` file in the project directory:
+* **Shutdown Notification:**
+  ```powershell
+  py power_monitor.py shutdown
+  ```
 
-```env
-TELEGRAM_BOT_TOKEN="YOUR_BOT_TOKEN"
-TELEGRAM_CHAT_ID="YOUR_CHAT_ID"
-```
+### 2. Silent Runner Testing
+Test the VBScript wrapper to verify execution without opening a console window:
 
-⚠️ **Never commit ****`.env`**** to GitHub.**
+* **Silent Startup:**
+  ```powershell
+  wscript silent_runner.vbs startup
+  ```
 
-The project already includes `.gitignore` rules to keep the credentials private.
+* **Silent Shutdown:**
+  ```powershell
+  wscript silent_runner.vbs shutdown
+  ```
 
-## 🧪 Manual Testing
+---
 
-### Test startup notification
+## 📸 Telegram Alert Samples
 
-```powershell
-py power_monitor.py startup
-```
-
-### Test shutdown notification
-
-```powershell
-py power_monitor.py shutdown
-```
-
-A successful execution should produce:
-
+### 🚀 Startup Alert
 ```text
-Success: Telegram alert sent successfully.
-```
-
-and a Telegram notification should arrive on the configured phone.
-
-## 🔕 Silent Execution
-
-The project includes `silent_runner.vbs` so that Python can run without opening a visible Command Prompt window.
-
-### Startup
-
-```powershell
-wscript silent_runner.vbs startup
-```
-
-### Shutdown
-
-```powershell
-wscript silent_runner.vbs shutdown
-```
-
-The silent runner dynamically locates the project directory and launches the configured Python interpreter without displaying a console window.
-
-## 🪟 Windows Startup Automation
-
-The current version uses **Windows Task Scheduler** to automatically execute the startup notification when the configured Windows user logs in.
-
-The workflow is:
-
-```text
-Windows Login
-     ↓
-Task Scheduler
-     ↓
-silent_runner.vbs startup
-     ↓
-power_monitor.py
-     ↓
-Telegram
-```
-
-The startup task has been manually tested successfully.
-
-## 🌐 Network Resilience
-
-Windows may finish starting before the Wi-Fi or internet connection is ready.
-
-To handle this, the startup notification includes retry logic.
-
-Current configuration:
-
-```text
-Startup:
-10 attempts
-5-second delay
-
-Shutdown:
-3 attempts
-1-second delay
-```
-
-This gives the notification system an opportunity to recover from temporary network availability problems.
-
-## 🔐 Security
-
-Sensitive credentials are intentionally excluded from the repository.
-
-The following files are ignored:
-
-```text
-.env
-error.log
-__pycache__/
-*.pyc
-```
-
-The repository contains `.env.example` instead of the real credentials.
-
-The application also sanitizes Telegram bot tokens before writing exception information to logs.
-
-### Never commit:
-
-```text
-.env
-```
-
-## 🧪 Current Validation
-
-The following components have been tested successfully:
-
-| Component                      | Status |
-| ------------------------------ | ------ |
-| Telegram Bot API               | ✅ PASS |
-| Correct Telegram Chat ID       | ✅ PASS |
-| Python startup notification    | ✅ PASS |
-| Python shutdown notification   | ✅ PASS |
-| Silent startup execution       | ✅ PASS |
-| Silent shutdown execution      | ✅ PASS |
-| Token sanitization             | ✅ PASS |
-| Dynamic path resolution        | ✅ PASS |
-| Windows Task Scheduler startup | ✅ PASS |
-
-## 🗺️ Roadmap
-
-### Version 0.1 — Core Monitoring
-
-* [x] Python notification engine
-* [x] Telegram integration
-* [x] Environment configuration
-* [x] Silent execution
-* [x] Startup automation
-* [x] Security cleanup
-
-### Version 0.2 — Power Event Automation
-
-* [ ] Automatic shutdown detection
-* [ ] Restart detection
-* [ ] Better Windows event handling
-* [ ] Shutdown reliability testing
-
-### Version 0.3 — Monitoring & History
-
-* [ ] Local event database
-* [ ] Startup/shutdown history
-* [ ] Event timestamps
-* [ ] Session duration tracking
-* [ ] System information
-
-### Version 1.0 — Complete Sentinel
-
-* [ ] Automatic installer
-* [ ] Configuration wizard
-* [ ] Background service
-* [ ] Dashboard
-* [ ] Advanced security monitoring
-* [ ] Release packaging
-
-## 📸 Example Notification
-
-Example startup alert:
-
-```text
-🚀 ASUS TUF Alert: System Startup
+🚀 SENTINEL ALERT — SYSTEM STARTUP
 ━━━━━━━━━━━━━━━━━━━━━━
-💻 Device: ASUS TUF A15
-🕒 Time: 2026-08-19 11:30:00 PM
-⚡ Status: Event triggered and confirmed
+💻 Device: ASUS TUF A15 (ASUSTUFGAMING)
+🪟 OS: Windows 11
+👤 User: koppu
+🕒 Time: 2026-08-20 03:15:54 PM
+
+🔋 Battery: 70%
+⚡ Power: Battery
+
+🌐 Public IP: 2401:4900:cbe9:xxxx:xxxx:xxxx:xxxx:xxxx
+
+📍 Approximate Location:
+Hyderabad, Telangana, India
+
+🧭 Coordinates:
+17.37529, 78.47439
+
+🗺️ Map:
+https://www.google.com/maps?q=17.375289,78.47439
+━━━━━━━━━━━━━━━━━━━━━━
+✅ Status: Event triggered and confirmed
 ```
 
-## 🎯 Why This Project?
+### 🛑 Shutdown Alert
+```text
+🛑 SENTINEL ALERT — SYSTEM SHUTDOWN
+━━━━━━━━━━━━━━━━━━━━━━
+💻 Device: ASUS TUF A15 (ASUSTUFGAMING)
+🪟 OS: Windows 11
+👤 User: koppu
+🕒 Time: 2026-08-20 03:15:55 PM
 
-The project demonstrates how a local Windows system can communicate with a cloud-based notification service.
+🔋 Battery: 70%
+⚡ Power: Battery
 
-It combines:
+🌐 Public IP: 2401:4900:cbe9:xxxx:xxxx:xxxx:xxxx:xxxx
 
-* Python development
-* REST APIs
-* Windows automation
-* Task Scheduler
-* Environment variables
-* Error handling
-* Network resilience
-* Background process execution
-* Basic security practices
+📍 Approximate Location:
+Hyderabad, Telangana, India
+
+🧭 Coordinates:
+17.37529, 78.47439
+
+🗺️ Map:
+https://www.google.com/maps?q=17.375289,78.47439
+━━━━━━━━━━━━━━━━━━━━━━
+⚡ Status: Shutdown initiated
+```
+
+---
+
+## 🪟 Windows Task Scheduler Integration
+
+| Event | Task Name | Trigger | User Account | Action |
+| :--- | :--- | :--- | :--- | :--- |
+| **Startup** | `TUF Power Monitor - Startup` | At log on of any user | Standard User / Administrator | `wscript.exe "C:\path\to\silent_runner.vbs" startup` |
+| **Shutdown** | `TUF Power Monitor - Shutdown` | Event 1074 (User32) | `NT AUTHORITY\SYSTEM` (Highest Privileges) | `wscript.exe "C:\path\to\silent_runner.vbs" shutdown` |
+
+---
+
+## 🔐 Security & Privacy
+
+* **Zero Credential Leaks:** `.env` and `error.log` are strictly ignored by `.gitignore`.
+* **Automated Log Sanitization:** Any exception traceback or logging output containing the Telegram token has the secret stripped before writing to disk.
+* **Privacy Conscious:** Sentinel collects only high-level device status (OS, username, battery, network routing location). It does not access private files, keystrokes, or browser history.
+
+---
+
+## 🗺️ Project Roadmap
+
+* [x] **Version 0.1 — Core Monitoring**
+  * Python notification engine, Telegram integration, environment configuration, silent execution.
+* [x] **Version 0.2 — Power Event Automation**
+  * Task Scheduler shutdown Event ID 1074 automation running as SYSTEM, login startup trigger.
+* [x] **Version 0.3 — Sentinel Intelligence** *(Current Release)*
+  * Modular package structure, public IP resolution, approximate geolocation, Google Maps integration, battery telemetry, and extended system info.
+* [ ] **Version 0.4 — Advanced Event Detection**
+  * Windows Sleep/Wake event detection, restart categorization, Wi-Fi SSID tracking.
+* [ ] **Version 1.0 — Sentinel Complete**
+  * Automated 1-click Windows installer, SQLite event history database, and local monitoring dashboard.
+
+---
 
 ## 👨‍💻 Author
 
-**Shiva Dhikshith**
+**Shiva Dhikshith**  
+* GitHub: [@shivdhiksh](https://github.com/shivdhiksh)  
+* LinkedIn: [@shivdhiksh](https://www.linkedin.com/in/shivdhiksh)
 
-GitHub: [@shivdhiksh](https://github.com/shivdhiksh)
+---
 
-Linkdin: [@shivdhiksh](www.linkedin.com/in/shivdhiksh)
-
-
-This project is currently provided for educational and personal use.
+*Licensed for educational and personal use.*
