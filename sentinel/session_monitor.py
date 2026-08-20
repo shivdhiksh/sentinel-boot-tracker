@@ -1,16 +1,19 @@
 """
 Native Win32 Session Monitor Daemon:
 Listens for Windows Session Lock and Unlock events using WTSRegisterSessionNotification.
-Zero polling, 0% CPU consumption, with duplicate prevention and clean shutdown.
+Zero polling, 0% CPU consumption, with single-instance mutex and clean shutdown.
 """
+import os
 import sys
 import time
 import signal
 import ctypes
+import subprocess
 from ctypes import wintypes
+from pathlib import Path
 from typing import Optional
 
-from .config import logger
+from .config import BASE_DIR, logger
 from .telegram import send_telegram_alert
 
 # Win32 Constants
@@ -21,6 +24,7 @@ NOTIFY_FOR_THIS_SESSION = 0
 PM_REMOVE = 0x0001
 WS_EX_TOOLWINDOW = 0x00000080
 WS_POPUP = 0x80000000
+ERROR_ALREADY_EXISTS = 183
 
 # Window Proc Callback Type
 WNDPROC = ctypes.WINFUNCTYPE(
@@ -50,9 +54,19 @@ class WNDCLASSEXW(ctypes.Structure):
 class SessionMonitor:
     def __init__(self):
         self.hwnd: Optional[int] = None
+        self.mutex: Optional[int] = None
         self.last_state: Optional[str] = None
         self.running = False
-        self._wnd_proc_ref = None  # Prevent GC of ctypes callback
+        self._wnd_proc_ref = None
+
+    def _acquire_mutex(self) -> bool:
+        """Ensures only a single instance of the session monitor runs per user session."""
+        mutex_name = f"SentinelSessionMonitor_{os.getenv('USERNAME', 'DefaultUser')}"
+        self.mutex = ctypes.windll.kernel32.CreateMutexW(None, True, mutex_name)
+        if ctypes.GetLastError() == ERROR_ALREADY_EXISTS:
+            print("[*] Sentinel Session Monitor is already running in this session.")
+            return False
+        return True
 
     def _window_proc(self, hwnd: int, msg: int, wparam: int, lparam: int) -> int:
         if msg == WM_WTSSESSION_CHANGE:
@@ -77,6 +91,9 @@ class SessionMonitor:
 
     def start(self):
         """Initializes the Win32 message-only window and starts the event loop."""
+        if not self._acquire_mutex():
+            return
+
         self.running = True
         h_inst = ctypes.windll.kernel32.GetModuleHandleW(None)
         class_name = f"SentinelSessionMonitorClass_{int(time.time())}"
@@ -147,12 +164,33 @@ class SessionMonitor:
             ctypes.windll.wtsapi32.WTSUnRegisterSessionNotification(self.hwnd)
             ctypes.windll.user32.DestroyWindow(self.hwnd)
             self.hwnd = None
+        if self.mutex:
+            ctypes.windll.kernel32.CloseHandle(self.mutex)
+            self.mutex = None
 
     def stop(self):
         """Stops the event loop."""
         self.running = False
         if self.hwnd:
             ctypes.windll.user32.PostMessageW(self.hwnd, 0x0012, 0, 0)  # WM_QUIT
+
+def ensure_session_monitor_running():
+    """
+    Spawns session_monitor silently in background if not already running.
+    """
+    try:
+        pythonw_path = sys.executable.replace("python.exe", "pythonw.exe")
+        if not Path(pythonw_path).exists():
+            pythonw_path = "pythonw.exe"
+        
+        script_path = str(BASE_DIR / "power_monitor.py")
+        subprocess.Popen(
+            [pythonw_path, script_path, "session_monitor"],
+            cwd=str(BASE_DIR),
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        )
+    except Exception as exc:
+        logger.warning(f"Could not auto-start session monitor: {exc}")
 
 def run_session_monitor():
     monitor = SessionMonitor()
