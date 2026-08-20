@@ -1,7 +1,15 @@
 import os
+import sys
+import io
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
+
+# Safe stream fallback for pythonw.exe execution where stdout/stderr are None
+if sys.stdout is None:
+    sys.stdout = io.StringIO()
+if sys.stderr is None:
+    sys.stderr = io.StringIO()
 
 # Base project directory
 BASE_DIR = Path(__file__).resolve().parent.parent
