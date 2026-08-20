@@ -4,12 +4,13 @@ from typing import Optional
 from .config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, logger, sanitize
 from .system_info import get_system_metadata
 from .network import get_network_info
+from .location import get_location_telemetry
 from .notifications import format_telegram_alert
 
 def send_telegram_alert(event_type: str) -> bool:
     """
-    Orchestrates gathering metadata, network info, formatting the message,
-    and dispatching it to the Telegram Bot API with resilient retry loops.
+    Orchestrates gathering system metadata, network IP, multi-tier location telemetry,
+    formatting the HTML message, and dispatching it to the Telegram Bot API with resilient retry loops.
     """
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         err_msg = "Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID in environment."
@@ -18,17 +19,21 @@ def send_telegram_alert(event_type: str) -> bool:
         return False
 
     is_startup = event_type.lower() == "startup"
+    is_shutdown = event_type.lower() == "shutdown"
 
     # Step 1: Collect system and battery metadata
     system_info = get_system_metadata()
 
-    # Step 2: Detect public IP and approximate geolocation (gracefully handles timeouts)
-    # Shorter timeout during shutdown to prioritize swift dispatch
-    net_timeout = 3.5 if is_startup else 2.0
+    # Step 2: Detect public IP (tight timeout during shutdown)
+    net_timeout = 2.0 if is_shutdown else 3.5
     network_info = get_network_info(timeout=net_timeout)
 
-    # Step 3: Format HTML notification
-    message = format_telegram_alert(event_type, system_info, network_info)
+    # Step 3: Resolve location telemetry via 3-tier engine
+    # (Live Windows Location for active user sessions, Cache for SYSTEM shutdown, or IP fallback)
+    location_telemetry = get_location_telemetry(timeout=net_timeout)
+
+    # Step 4: Format HTML notification
+    message = format_telegram_alert(event_type, system_info, network_info, location_telemetry)
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {

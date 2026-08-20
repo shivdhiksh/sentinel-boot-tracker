@@ -1,76 +1,82 @@
 # 🛡️ Sentinel Boot Tracker
 
-A lightweight, intelligent Windows laptop power and activity monitoring system that sends real-time **Telegram notifications** enriched with network, battery, and approximate location telemetry upon system startup and shutdown.
+A lightweight, intelligent Windows laptop power and activity monitoring system that delivers real-time **Telegram notifications** enriched with native Windows Geolocation, battery telemetry, and session activity (Startup, Shutdown, Lock, and Unlock).
 
 ---
 
 ## 🚀 Project Overview
 
-**Sentinel Boot Tracker** (v0.3 — *Sentinel Intelligence*) monitors Windows power events and delivers rich telemetry alerts directly to your Telegram.
-
-It pairs low-overhead Windows automation with resilient Python telemetry collection to provide instant situational awareness whenever your laptop boots up or initiates a shutdown.
+**Sentinel Boot Tracker** (v0.3 — *Sentinel Intelligence*) combines low-overhead Windows automation with a 3-tier telemetry engine to provide instant situational awareness whenever your laptop boots, locks, unlocks, or initiates a shutdown.
 
 ```text
   Windows Laptop (ASUS TUF A15)
                │
-      ┌────────┴────────┐
-      ▼                 ▼
-   Startup          Shutdown (Event 1074)
-      │                 │
-      ▼                 ▼
- Task Scheduler    Task Scheduler (SYSTEM)
-      │                 │
-      └────────┬────────┘
-               ▼
-       silent_runner.vbs
-               │
-               ▼
-       power_monitor.py
-               │
-               ▼
-       sentinel/ package
-   ├── system_info (OS, User, Battery %)
-   ├── network (Public IP, Approx Location)
-   └── telegram (Retry loops, HTML formatting)
-               │
-               ▼
-        Telegram Bot API
-               │
-               ▼
-      📱 Telegram Notification
+      ┌────────┼────────┬────────┐
+      ▼        ▼        ▼        ▼
+   Startup    Lock   Unlock   Shutdown (Event 1074)
+      │        │        │        │
+      ▼        └────┬───┘        ▼
+Task Scheduler      │       Task Scheduler (SYSTEM)
+ (User Login)       ▼            │
+      │       session_monitor    │
+      └─────────────┼────────────┘
+                    ▼
+            silent_runner.vbs
+                    │
+                    ▼
+            power_monitor.py
+                    │
+                    ▼
+            sentinel/ package
+   ├── location (3-Tier Windows Geolocation + 1h Cache)
+   ├── session_monitor (Native Win32 WTSSessionNotification)
+   ├── system_info (OS, User, Battery %, AC Status)
+   ├── network (Public IP Detection & IP Geolocation)
+   └── telegram (Retry Loops & Rich HTML Formatting)
+                    │
+                    ▼
+             Telegram Bot API
+                    │
+                    ▼
+           📱 Telegram Notification
 ```
 
 ---
 
 ## ✨ Features
 
-### 🚀 Sentinel v0.3 Intelligence (New)
-* 🌐 **Public IP Detection:** Automated multi-provider IP resolution (`ipapi.co` $\rightarrow$ `ip-api.com` $\rightarrow$ `ipify.org`).
-* 📍 **Approximate Geolocation:** City, Region, and Country mapping based on public IP routing.
-* 🗺️ **Dynamic Google Maps Link:** Direct map coordinates URL generated when latitude/longitude coordinates are available.
-* 🔋 **Battery & Power Telemetry:** Real-time battery percentage tracking and AC adapter status (`AC` vs `Battery`).
-* 💻 **System Metadata:** Gathers device hostname, Windows version, active username, and Python runtime version.
-* 🏛️ **Modular Package Architecture:** Clean separation of concerns into a dedicated `sentinel/` package while maintaining seamless entry-point compatibility.
+### 📍 3-Tier Multi-Source Geolocation Engine (New in v0.3)
+* **Tier 1 — Windows Native Geolocation:** Queries `Windows.Devices.Geolocation` via WinRT in active user sessions. Captures live `PositionSource` (`Wi-Fi`, `Cellular`, `Satellite/GNSS`), exact horizontal accuracy in meters (e.g. `~112 m`), and generates verified Google Maps links.
+* **Tier 2 — User-Session Location Cache (`.location_cache.json`):** Persists the last verified native location for background processes running in Session 0 (such as the SYSTEM shutdown task).
+  * **Strict 1-Hour Expiration:** Cache expires after 3600 seconds.
+  * **Explicit Telemetry State:** Never claims cached data is live; clearly displays `🟡 Status: Cached location` and `🕒 Location updated: X minutes ago`.
+* **Tier 3 — Multi-Provider IP Fallback:** If Windows location is disabled, denied, or offline and no fresh cache exists, automatically falls back to IP geolocation (`ipapi.co` $\rightarrow$ `ip-api.com` $\rightarrow$ `ipify.org`), accurately labeled as `📍 APPROXIMATE LOCATION` with `⚠️ IP-based location is not precise.`
 
-### 🛡️ Core Reliability & Security Baseline
-* 🤖 **Telegram Bot API Integration:** Instant alerts with rich HTML formatting and emoji indicators.
-* 🔕 **Silent Background Execution:** Zero-console popup wrapper using Windows VBScript (`wscript.exe`).
-* 🪟 **Automated Event Triggers:**
-  * **Startup:** Automatic execution on Windows user login via Windows Task Scheduler.
-  * **Shutdown:** Automatic execution on Windows Event ID 1074 (User32 shutdown) running with SYSTEM privileges.
-* 🌐 **Network Resilience:** Multi-attempt retry mechanisms (up to 10 attempts for startup, 3 for shutdown) with backoff intervals to handle delayed Wi-Fi connections.
-* 🔒 **Token Sanitization:** Automatically redacts sensitive Telegram Bot tokens from error logs and console outputs.
-* 🔐 **Secure Credential Isolation:** All secrets reside in local `.env` files strictly excluded from source control.
+### 🔒 Workstation Lock & Unlock Monitoring (New in v0.3)
+* **Native Win32 Session Events:** Uses `WTSRegisterSessionNotification` on `WM_WTSSESSION_CHANGE` to detect workstation locks (`Win+L`) and unlocks.
+* **Zero Polling:** Pure Windows event loop; consumes 0% CPU when idle with built-in deduplication.
+
+### 🔋 Battery & System Telemetry
+* Real-time battery percentage tracking and AC power state detection (`AC` vs `Battery`).
+* Captures Windows OS version, active user, device hostname, and Python runtime.
+
+### 🛡️ Security & Privacy
+* **Zero Secret Exposure:** Bot tokens are automatically redacted from error logs (`[REDACTED_TOKEN]`).
+* **Untracked Private Assets:** `.env`, `error.log`, and `.location_cache.json` are strictly ignored by `.gitignore`.
+* **Zero Bloat / Privacy Respect:** Sentinel collects only high-level device metrics and hardware status. No passwords, keystrokes, browser history, or private files are ever accessed.
 
 ---
 
-## 📍 Approximate Location Notice
+## 🪟 Windows Location Services Setup
+
+To enable Tier 1 high-accuracy location via Wi-Fi triangulation:
+1. Open **Windows Settings** (`Win + I`).
+2. Navigate to **Privacy & Security** $\rightarrow$ **Location**.
+3. Turn **Location services** **ON**.
+4. Enable **Let apps access your location** and **Let desktop apps access your location**.
 
 > [!NOTE]
-> Standard laptops do not possess built-in hardware GPS receivers. All location telemetry is derived from **Public IP Geolocation** provided by upstream network routing tables and ISPs.
-> 
-> * Location data is labeled strictly as **"Approximate Location"**.
-> * If IP geolocation fails or is unreachable, the core notification continues to dispatch gracefully with `Unavailable` markers.
+> If Windows Location Services is disabled or permission is not granted, Sentinel operates with zero crashes and gracefully falls back to Tier 3 IP Geolocation.
 
 ---
 
@@ -82,18 +88,21 @@ sentinel-boot-tracker/
 ├── sentinel/                     # Modular Sentinel Engine
 │   ├── __init__.py               # Package metadata and version info (0.3.0)
 │   ├── config.py                 # Environment variables, logging, token sanitization
+│   ├── location.py               # 3-Tier Geolocation Engine & 1h cache manager
+│   ├── session_monitor.py        # Win32 WTSRegisterSessionNotification daemon
 │   ├── system_info.py            # Battery status, OS, username, and device info
-│   ├── network.py                # Public IP detection & approximate IP geolocation
-│   ├── notifications.py          # HTML message builder and visual formatters
+│   ├── network.py                # Public IP detection & multi-provider IP fallback
+│   ├── notifications.py          # HTML message builder with event & tier rendering
 │   └── telegram.py               # Telegram API client with resilient retry loops
 │
-├── power_monitor.py              # CLI entry point (preserves legacy interface)
+├── power_monitor.py              # CLI entry point (supports startup, shutdown, lock, unlock, session_monitor)
 ├── silent_runner.vbs             # Silent VBScript wrapper for background execution
-├── requirements.txt              # Python package dependencies
+├── requirements.txt              # Dependencies (requests, python-dotenv, psutil, winrt)
 ├── .env.example                  # Environment configuration template
 ├── .gitignore                    # Git exclusion rules
 │
 ├── .env                          # Local credentials (NEVER committed)
+├── .location_cache.json          # Local location cache (NEVER committed)
 └── error.log                     # Local error logs (NEVER committed)
 ```
 
@@ -103,148 +112,134 @@ sentinel-boot-tracker/
 
 * **Operating System:** Windows 10 / 11 (64-bit)
 * **Python:** Python 3.13+ (or 3.10+)
-* **Dependencies:** `requests`, `python-dotenv`, `psutil`
+* **Dependencies:** `requests`, `python-dotenv`, `psutil`, `winrt-Windows.Devices.Geolocation`, `winrt-Windows.Foundation`
 * **Accounts:** Telegram account and a Telegram Bot token via BotFather
 
 ---
 
-## 📦 Installation & Setup
+## 📦 Installation
 
-1. **Clone the Repository:**
-   ```powershell
-   git clone https://github.com/shivdhiksh/sentinel-boot-tracker.git
-   cd sentinel-boot-tracker
-   ```
+```powershell
+git clone https://github.com/shivdhiksh/sentinel-boot-tracker.git
+cd sentinel-boot-tracker
+py -m pip install -r requirements.txt
+```
 
-2. **Install Dependencies:**
-   ```powershell
-   py -m pip install -r requirements.txt
-   ```
-
-3. **Configure Environment Credentials:**
-   Create a `.env` file in the project root based on `.env.example`:
-   ```env
-   TELEGRAM_BOT_TOKEN="123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ"
-   TELEGRAM_CHAT_ID="987654321"
-   ```
+Create `.env` based on `.env.example`:
+```env
+TELEGRAM_BOT_TOKEN="YOUR_BOT_TOKEN"
+TELEGRAM_CHAT_ID="YOUR_CHAT_ID"
+```
 
 ---
 
 ## 🧪 Testing & Execution
 
-### 1. Direct Python Testing
-Run manual tests from PowerShell or Command Prompt:
+### 1. Standalone Location Diagnostic Test (No Telegram Messages)
+```powershell
+py -m sentinel.location
+```
+*Output demonstrates real-time location tier, accuracy, source, and cache status.*
 
-* **Startup Notification:**
-  ```powershell
-  py power_monitor.py startup
-  ```
+### 2. Manual Power & Session Alert Tests
+* **Startup Alert:** `py power_monitor.py startup`
+* **Shutdown Alert:** `py power_monitor.py shutdown`
+* **Lock Alert:** `py power_monitor.py lock`
+* **Unlock Alert:** `py power_monitor.py unlock`
 
-* **Shutdown Notification:**
-  ```powershell
-  py power_monitor.py shutdown
-  ```
+### 3. Silent Wrapper Execution
+* **Silent Startup:** `wscript silent_runner.vbs startup`
+* **Silent Shutdown:** `wscript silent_runner.vbs shutdown`
 
-### 2. Silent Runner Testing
-Test the VBScript wrapper to verify execution without opening a console window:
-
-* **Silent Startup:**
-  ```powershell
-  wscript silent_runner.vbs startup
-  ```
-
-* **Silent Shutdown:**
-  ```powershell
-  wscript silent_runner.vbs shutdown
-  ```
+### 4. Background Session Monitor Daemon
+```powershell
+py power_monitor.py session_monitor
+```
+*Listens for live `Win+L` lock and unlock events in real-time.*
 
 ---
 
 ## 📸 Telegram Alert Samples
 
-### 🚀 Startup Alert
+### 🚀 Live Windows Wi-Fi Location (Startup)
 ```text
 🚀 SENTINEL ALERT — SYSTEM STARTUP
 ━━━━━━━━━━━━━━━━━━━━━━
 💻 Device: ASUS TUF A15 (ASUSTUFGAMING)
 🪟 OS: Windows 11
 👤 User: koppu
-🕒 Time: 2026-08-20 03:15:54 PM
+🕒 Time: 2026-08-20 03:25:00 PM
 
 🔋 Battery: 70%
 ⚡ Power: Battery
 
 🌐 Public IP: 2401:4900:cbe9:xxxx:xxxx:xxxx:xxxx:xxxx
 
-📍 Approximate Location:
-Hyderabad, Telangana, India
+📍 LOCATION
+Latitude: 17.396335
+Longitude: 78.517847
 
-🧭 Coordinates:
-17.37529, 78.47439
+🎯 Accuracy: ~112 m
+📡 Source: Wi-Fi
+🟢 Status: Live location
 
-🗺️ Map:
-https://www.google.com/maps?q=17.375289,78.47439
+🗺️ Google Maps:
+https://www.google.com/maps?q=17.396335,78.517847
 ━━━━━━━━━━━━━━━━━━━━━━
 ✅ Status: Event triggered and confirmed
 ```
 
-### 🛑 Shutdown Alert
+### 🛑 Fresh Cached Location (SYSTEM Shutdown)
 ```text
 🛑 SENTINEL ALERT — SYSTEM SHUTDOWN
 ━━━━━━━━━━━━━━━━━━━━━━
 💻 Device: ASUS TUF A15 (ASUSTUFGAMING)
 🪟 OS: Windows 11
-👤 User: koppu
-🕒 Time: 2026-08-20 03:15:55 PM
+👤 User: SYSTEM
+🕒 Time: 2026-08-20 03:30:00 PM
 
-🔋 Battery: 70%
+🔋 Battery: 68%
 ⚡ Power: Battery
 
 🌐 Public IP: 2401:4900:cbe9:xxxx:xxxx:xxxx:xxxx:xxxx
 
-📍 Approximate Location:
-Hyderabad, Telangana, India
+📍 LOCATION
+Latitude: 17.396335
+Longitude: 78.517847
 
-🧭 Coordinates:
-17.37529, 78.47439
+🎯 Accuracy: ~112 m
+📡 Source: Wi-Fi
+🕒 Location updated: 5 minutes ago
+🟡 Status: Cached location
 
-🗺️ Map:
-https://www.google.com/maps?q=17.375289,78.47439
+🗺️ Google Maps:
+https://www.google.com/maps?q=17.396335,78.517847
 ━━━━━━━━━━━━━━━━━━━━━━
 ⚡ Status: Shutdown initiated
 ```
 
+### 📍 IP Geolocation Fallback (When Location is Disabled / Cache > 1h)
+```text
+📍 APPROXIMATE LOCATION
+Hyderabad, Telangana, India
+
+🎯 Accuracy: Approximate
+📡 Source: IP address
+⚠️ IP-based location is not precise.
+
+🗺️ Google Maps:
+https://www.google.com/maps?q=17.375289,78.47439
+```
+
 ---
 
-## 🪟 Windows Task Scheduler Integration
+## 🪟 Windows Automation Reference
 
-| Event | Task Name | Trigger | User Account | Action |
+| Event | Task / Runner | Trigger | Context | Action |
 | :--- | :--- | :--- | :--- | :--- |
-| **Startup** | `TUF Power Monitor - Startup` | At log on of any user | Standard User / Administrator | `wscript.exe "C:\path\to\silent_runner.vbs" startup` |
-| **Shutdown** | `TUF Power Monitor - Shutdown` | Event 1074 (User32) | `NT AUTHORITY\SYSTEM` (Highest Privileges) | `wscript.exe "C:\path\to\silent_runner.vbs" shutdown` |
-
----
-
-## 🔐 Security & Privacy
-
-* **Zero Credential Leaks:** `.env` and `error.log` are strictly ignored by `.gitignore`.
-* **Automated Log Sanitization:** Any exception traceback or logging output containing the Telegram token has the secret stripped before writing to disk.
-* **Privacy Conscious:** Sentinel collects only high-level device status (OS, username, battery, network routing location). It does not access private files, keystrokes, or browser history.
-
----
-
-## 🗺️ Project Roadmap
-
-* [x] **Version 0.1 — Core Monitoring**
-  * Python notification engine, Telegram integration, environment configuration, silent execution.
-* [x] **Version 0.2 — Power Event Automation**
-  * Task Scheduler shutdown Event ID 1074 automation running as SYSTEM, login startup trigger.
-* [x] **Version 0.3 — Sentinel Intelligence** *(Current Release)*
-  * Modular package structure, public IP resolution, approximate geolocation, Google Maps integration, battery telemetry, and extended system info.
-* [ ] **Version 0.4 — Advanced Event Detection**
-  * Windows Sleep/Wake event detection, restart categorization, Wi-Fi SSID tracking.
-* [ ] **Version 1.0 — Sentinel Complete**
-  * Automated 1-click Windows installer, SQLite event history database, and local monitoring dashboard.
+| **Startup** | `TUF Power Monitor - Startup` | User Logon | User Session | `wscript.exe silent_runner.vbs startup` |
+| **Shutdown** | `TUF Power Monitor - Shutdown` | Event 1074 | `NT AUTHORITY\SYSTEM` | `wscript.exe silent_runner.vbs shutdown` |
+| **Session** | `sentinel.session_monitor` | Background Task / Logon | User Session | `wscript.exe silent_runner.vbs session_monitor` |
 
 ---
 

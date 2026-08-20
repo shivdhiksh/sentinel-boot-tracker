@@ -2,3 +2,4 @@
 error.log
 __pycache__/
 *.pyc
+.location_cache.json

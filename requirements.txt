@@ -1,3 +1,5 @@
 requests>=2.31.0
 python-dotenv>=1.0.0
 psutil>=5.9.0
+winrt-Windows.Devices.Geolocation>=3.2.1
+winrt-Windows.Foundation>=3.2.1
