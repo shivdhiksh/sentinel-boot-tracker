@@ -25,4 +25,22 @@ End If
 
 ' Window style 0 = Hidden window, False = Do not block caller execution
 strCmd = """" & strPythonExe & """ " & strPythonScript & " " & strAction
+
+Sub LogMessage(msg)
+    On Error Resume Next
+    Dim strLogFile, objLogFile, dNow, strFormattedDate, strFormattedTime
+    strLogFile = strScriptDir & "\error.log"
+    dNow = Now
+    strFormattedDate = Year(dNow) & "-" & Right("0" & Month(dNow), 2) & "-" & Right("0" & Day(dNow), 2)
+    strFormattedTime = FormatDateTime(dNow, 3)
+    Set objLogFile = objFSO.OpenTextFile(strLogFile, 8, True)
+    If Err.Number = 0 Then
+        objLogFile.WriteLine strFormattedDate & " " & strFormattedTime & " [INFO] " & msg
+        objLogFile.Close
+    End If
+    On Error GoTo 0
+End Sub
+
+LogMessage "silent_runner.vbs launched (Action: " & strAction & ", Python: " & strPythonExe & ")"
 objShell.Run strCmd, 0, False
+

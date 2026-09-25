@@ -143,7 +143,12 @@ def get_windows_location(timeout: float = 3.5) -> Optional[Dict[str, Any]]:
         logger.info(f"Asyncio runner for Windows location failed: {sanitize(str(exc))}")
         return None
 
-def get_location_telemetry(timeout: float = 3.5, force_ip: bool = False, force_system_mode: bool = False) -> Dict[str, Any]:
+def get_location_telemetry(
+    timeout: float = 3.5,
+    force_ip: bool = False,
+    force_system_mode: bool = False,
+    network_info: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
     """
     Multi-tier location resolver:
     Tier 1: Windows.Devices.Geolocation (active user session only)
@@ -191,7 +196,7 @@ def get_location_telemetry(timeout: float = 3.5, force_ip: bool = False, force_s
             }
 
     # Tier 3: IP Geolocation Fallback
-    ip_net = get_network_info(timeout=timeout)
+    ip_net = network_info if network_info is not None else get_network_info(timeout=timeout)
     return {
         "location_tier": "ip_fallback",
         "location_name": ip_net.get("location", "Unavailable"),

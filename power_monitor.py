@@ -1,3 +1,4 @@
+import os
 import sys
 import traceback
 from pathlib import Path
@@ -8,6 +9,8 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 try:
+    from sentinel.config import logger, sanitize
+    from sentinel.location import is_system_context
     from sentinel.telegram import send_telegram_alert
     from sentinel.session_monitor import ensure_session_monitor_running
 except Exception as e:
@@ -18,6 +21,10 @@ except Exception as e:
 if __name__ == "__main__":
     action = sys.argv[1].strip().lower() if len(sys.argv) > 1 else "startup"
     
+    is_sys = is_system_context()
+    user = os.getenv("USERNAME", "Unknown")
+    logger.info(f"Python {action} process started (PID: {os.getpid()}, Context: {user}, SYSTEM: {is_sys})")
+    
     if action == "session_monitor":
         try:
             from sentinel.session_monitor import run_session_monitor
@@ -25,6 +32,14 @@ if __name__ == "__main__":
         except Exception as e:
             with open(BASE_DIR / "error.log", "a", encoding="utf-8") as f:
                 f.write(f"\n[SESSION MONITOR CRASH] {e}\n{traceback.format_exc()}\n")
+    elif action == "command_engine":
+        try:
+            from sentinel.command_engine import CommandEngine
+            engine = CommandEngine()
+            engine.run_polling_loop()
+        except Exception as e:
+            with open(BASE_DIR / "error.log", "a", encoding="utf-8") as f:
+                f.write(f"\n[COMMAND ENGINE CRASH] {e}\n{traceback.format_exc()}\n")
     elif action == "startup":
         send_telegram_alert("startup")
         ensure_session_monitor_running()
@@ -33,3 +48,4 @@ if __name__ == "__main__":
     else:
         send_telegram_alert("startup")
         ensure_session_monitor_running()
+

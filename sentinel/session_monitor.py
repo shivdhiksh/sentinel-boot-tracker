@@ -7,6 +7,7 @@ import os
 import sys
 import time
 import ctypes
+import threading
 import subprocess
 from ctypes import wintypes
 from pathlib import Path
@@ -121,6 +122,8 @@ class SessionMonitor:
         self.mutex: Optional[int] = None
         self.last_state: Optional[str] = None
         self.running = False
+        self.engine_thread: Optional[threading.Thread] = None
+        self.stop_event = threading.Event()
         self._wnd_proc_ref = None
         self._wnd_class_ref = None
 
@@ -168,6 +171,7 @@ class SessionMonitor:
                 return 0
             elif msg == WM_DESTROY:
                 logger.info("Received WM_DESTROY.")
+                self.stop()
                 return 0
         except Exception as exc:
             logger.error(f"Error in Win32 window procedure: {sanitize(str(exc))}")
@@ -175,7 +179,7 @@ class SessionMonitor:
         return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
     def start(self):
-        """Initializes the Win32 message window and starts the event loop."""
+        """Initializes the Win32 message window, starts the command engine worker, and enters the event loop."""
         if not self._acquire_mutex():
             return
 
@@ -237,6 +241,14 @@ class SessionMonitor:
             return
         logger.info(f"WTSRegisterSessionNotification success (Result: {wts_res})")
 
+        # Start the Telegram Remote Command Engine worker thread
+        try:
+            from .command_engine import start_command_engine_worker
+            self.engine_thread = start_command_engine_worker(stop_event=self.stop_event)
+            logger.info("Spawned Telegram Command Engine worker thread in persistent SessionMonitor.")
+        except Exception as exc:
+            logger.error(f"Failed to spawn Telegram Command Engine worker thread: {sanitize(str(exc))}")
+
         msg = wintypes.MSG()
         while self.running:
             res = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
@@ -253,6 +265,10 @@ class SessionMonitor:
         logger.info("SessionMonitor message loop exited.")
 
         # Cleanup on termination
+        self.stop_event.set()
+        if self.engine_thread and self.engine_thread.is_alive():
+            self.engine_thread.join(timeout=2.0)
+
         if self.hwnd:
             wtsapi32.WTSUnRegisterSessionNotification(self.hwnd)
             user32.DestroyWindow(self.hwnd)
@@ -262,8 +278,9 @@ class SessionMonitor:
             self.mutex = None
 
     def stop(self):
-        """Stops the event loop."""
+        """Stops the event loop and background engine worker."""
         self.running = False
+        self.stop_event.set()
         if self.hwnd:
             user32.PostMessageW(self.hwnd, WM_QUIT, 0, 0)
 

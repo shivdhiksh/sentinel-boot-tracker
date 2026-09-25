@@ -1,6 +1,6 @@
 """Sentinel Boot Tracker - Core Package
-Sentinel v0.3 — Sentinel Intelligence
+Sentinel v0.4 — Remote Command Engine
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __author__ = "Shiva Dhikshith"
