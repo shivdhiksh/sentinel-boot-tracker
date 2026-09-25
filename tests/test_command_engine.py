@@ -1,6 +1,6 @@
 """
 Unit & Integration tests for sentinel.command_engine.
-Labels: UNIT / SIMULATED
+Labels: UNIT / SIMULATED / INTEGRATION
 """
 import os
 import json
@@ -9,7 +9,7 @@ import threading
 from unittest.mock import patch, MagicMock
 
 import requests
-from sentinel.command_engine import CommandEngine, STATE_FILE
+from sentinel.command_engine import CommandEngine, STATE_FILE, ALLOWLIST, HELP_TEXT
 
 def test_command_engine_deduplication(tmp_path):
     """[UNIT] Verifies duplicate update_ids are processed exactly once."""
@@ -122,3 +122,71 @@ def test_command_engine_network_failure_backoff():
         
         engine.run_polling_loop()
         assert mock_get.called
+
+def test_command_engine_v05_dispatch(tmp_path):
+    """[UNIT] Verifies dispatch routing for new v0.5 commands."""
+    test_state = tmp_path / ".test_update_state.json"
+
+    with patch("sentinel.command_engine.STATE_FILE", test_state), \
+         patch("sentinel.command_engine.is_authorized", return_value=True), \
+         patch("sentinel.command_engine.send_telegram_message") as mock_send, \
+         patch("sentinel.command_engine.execute_cpu", return_value="CPU OK") as mock_cpu, \
+         patch("sentinel.command_engine.execute_ram", return_value="RAM OK") as mock_ram, \
+         patch("sentinel.command_engine.execute_disk", return_value="Disk OK") as mock_disk, \
+         patch("sentinel.command_engine.execute_ping", return_value="Ping OK") as mock_ping, \
+         patch("sentinel.command_engine.execute_find", return_value="Find OK") as mock_find, \
+         patch("sentinel.command_engine.execute_restart_request", return_value="Restart Prompt") as mock_restart, \
+         patch("sentinel.command_engine.execute_agent", return_value="Agent OK") as mock_agent:
+
+        engine = CommandEngine()
+
+        commands_to_test = [
+            ("/cpu", mock_cpu),
+            ("/ram", mock_ram),
+            ("/disk", mock_disk),
+            ("/ping", mock_ping),
+            ("/find README.md", mock_find),
+            ("/restart", mock_restart),
+            ("/agent", mock_agent),
+        ]
+
+        for idx, (cmd_text, mock_func) in enumerate(commands_to_test, start=2000):
+            engine.process_update({
+                "update_id": idx,
+                "message": {"chat": {"id": 123456789}, "text": cmd_text}
+            })
+            assert mock_func.called
+
+        # Verify argument passed to /find
+        mock_find.assert_called_with("README.md")
+
+def test_command_engine_help_text():
+    """[UNIT] Verifies /help contains documentation for all v0.5 commands and confirmation notices."""
+    assert "/cpu" in HELP_TEXT
+    assert "/ram" in HELP_TEXT
+    assert "/disk" in HELP_TEXT
+    assert "/battery" in HELP_TEXT
+    assert "/uptime" in HELP_TEXT
+    assert "/system" in HELP_TEXT
+    assert "/network" in HELP_TEXT
+    assert "/wifi" in HELP_TEXT
+    assert "/sessions" in HELP_TEXT
+    assert "/security" in HELP_TEXT
+    assert "/events" in HELP_TEXT
+    assert "/audit" in HELP_TEXT
+    assert "/lastboot" in HELP_TEXT
+    assert "/health" in HELP_TEXT
+    assert "/version" in HELP_TEXT
+    assert "/restart" in HELP_TEXT
+    assert "/confirm_restart" in HELP_TEXT
+    assert "/find" in HELP_TEXT
+    assert "/list" in HELP_TEXT
+    assert "/fileinfo" in HELP_TEXT
+    assert "/open" in HELP_TEXT
+    assert "/ping" in HELP_TEXT
+    assert "/publicip" in HELP_TEXT
+    assert "/agent" in HELP_TEXT
+    assert "/restart_agent" in HELP_TEXT
+    assert "Requires 2-step confirmation" in HELP_TEXT
+    assert "Requires local user GUI consent" in HELP_TEXT
+    assert "Interactive session only" in HELP_TEXT

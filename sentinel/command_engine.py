@@ -9,7 +9,7 @@ import json
 import time
 import threading
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 
 import requests
 
@@ -17,32 +17,152 @@ from .config import BASE_DIR, AUTHORIZED_CHAT_ID, logger, sanitize, mask_chat_id
 from .command_auth import is_authorized
 from .command_audit import log_command_audit
 from .telegram import send_telegram_message, send_telegram_photo, get_telegram_updates
+
+# Modular Action Handlers
 from .remote_actions import (
     execute_status,
     execute_location,
-    execute_lock,
-    execute_shutdown_request,
-    execute_confirm_shutdown,
     execute_screenshot,
     execute_processes,
     execute_camera
+)
+from .power_actions import (
+    execute_lock,
+    execute_shutdown_request,
+    execute_confirm_shutdown,
+    execute_restart_request,
+    execute_confirm_restart
+)
+from .system_actions import (
+    execute_cpu,
+    execute_ram,
+    execute_disk,
+    execute_battery,
+    execute_uptime,
+    execute_system
+)
+from .security_actions import (
+    execute_sessions,
+    execute_security,
+    execute_events,
+    execute_audit,
+    execute_lastboot,
+    execute_health,
+    execute_version
+)
+from .file_actions import (
+    execute_find,
+    execute_list,
+    execute_fileinfo,
+    execute_open
+)
+from .network_actions import (
+    execute_ping,
+    execute_publicip,
+    execute_network,
+    execute_wifi
+)
+from .agent_actions import (
+    execute_agent,
+    execute_restart_agent
 )
 
 STATE_FILE = BASE_DIR / ".update_state.json"
 MAX_HISTORY_IDS = 500
 
 ALLOWLIST = {
+    # System
     "/status",
+    "/cpu",
+    "/ram",
+    "/disk",
+    "/battery",
+    "/uptime",
+    "/system",
+    "/network",
+    "/wifi",
     "/location",
+    # Security / Monitoring
+    "/sessions",
+    "/security",
+    "/events",
+    "/audit",
+    "/lastboot",
+    "/health",
+    "/version",
+    # Power
     "/lock",
     "/shutdown",
     "/confirm_shutdown",
+    "/restart",
+    "/confirm_restart",
+    # Safe File Operations
+    "/find",
+    "/list",
+    "/fileinfo",
+    "/open",
+    # Network Diagnostics
+    "/ping",
+    "/publicip",
+    # Agent Lifecycle
+    "/agent",
+    "/restart_agent",
+    # Sensory / Existing
     "/screenshot",
     "/processes",
     "/camera",
     "/help",
     "/start"
 }
+
+HELP_TEXT = (
+    "🛡️ <b>SENTINEL REMOTE COMMAND REFERENCE (v0.5)</b>\n"
+    "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    "📊 <b>SYSTEM TELEMETRY:</b>\n"
+    "• <code>/status</code> — Full device & status summary\n"
+    "• <code>/cpu</code> — CPU load, topology & clock speed\n"
+    "• <code>/ram</code> — RAM & swap memory telemetry\n"
+    "• <code>/disk</code> — Local storage usage (used/free/total)\n"
+    "• <code>/battery</code> — Battery %, power source & status\n"
+    "• <code>/uptime</code> — Windows uptime & boot timestamp\n"
+    "• <code>/system</code> — OS version, CPU, RAM & GPU summary\n"
+    "• <code>/network</code> — Active network adapters & IP info\n"
+    "• <code>/wifi</code> — Connected Wi-Fi SSID, signal & radio info\n"
+    "• <code>/location</code> — 3-tier GPS & IP location report\n\n"
+    "🔒 <b>SECURITY & MONITORING:</b>\n"
+    "• <code>/sessions</code> — Windows user & console sessions\n"
+    "• <code>/security</code> — Sentinel security posture & gates\n"
+    "• <code>/events</code> — Recent Sentinel lifecycle events\n"
+    "• <code>/audit</code> — Sanitized remote-command audit trail\n"
+    "• <code>/lastboot</code> — Latest boot timestamp & duration\n"
+    "• <code>/health</code> — Component-by-component self check\n"
+    "• <code>/version</code> — Sentinel version & component versions\n\n"
+    "⚡ <b>POWER CONTROLS:</b>\n"
+    "• <code>/lock</code> — Instantly lock workstation\n"
+    "• <code>/shutdown</code> — Request system shutdown <i>[Requires 2-step confirmation]</i>\n"
+    "• <code>/confirm_shutdown</code> — Confirm pending shutdown within 30s\n"
+    "• <code>/restart</code> — Request system restart <i>[Requires 2-step confirmation]</i>\n"
+    "• <code>/confirm_restart</code> — Confirm pending restart within 30s\n\n"
+    "📁 <b>SAFE FILE OPERATIONS:</b>\n"
+    "• <code>/find &lt;filename&gt;</code> — Search only within approved roots\n"
+    "• <code>/list [approved-folder]</code> — List approved folder contents\n"
+    "• <code>/fileinfo &lt;path&gt;</code> — Safe file metadata (no contents)\n"
+    "• <code>/open &lt;approved-folder&gt;</code> — Open folder in Explorer <i>[Interactive session only]</i>\n\n"
+    "📡 <b>NETWORK DIAGNOSTICS:</b>\n"
+    "• <code>/ping</code> — Bounded latency test to trusted endpoints\n"
+    "• <code>/publicip</code> — Multi-provider public IP detection\n\n"
+    "🤖 <b>AGENT LIFECYCLE:</b>\n"
+    "• <code>/agent</code> — Sentinel process health & memory usage\n"
+    "• <code>/restart_agent</code> — Safely restart Sentinel daemon\n\n"
+    "📸 <b>SENSORY & PROCESSES:</b>\n"
+    "• <code>/screenshot</code> — Desktop screenshot <i>[Interactive session only]</i>\n"
+    "• <code>/processes</code> — Top 20 processes by memory\n"
+    "• <code>/camera</code> — Single snapshot <i>[Requires local user GUI consent]</i>\n"
+    "• <code>/help</code> — Show this command reference\n"
+    "━━━━━━━━━━━━━━━━━━━━━━\n"
+    "🔒 <i>Strict single-user authorization & audit active.</i>"
+)
+
 
 class CommandEngine:
     def __init__(self, stop_event: Optional[threading.Event] = None):
@@ -83,41 +203,192 @@ class CommandEngine:
             logger.warning(f"Could not save update state file: {sanitize(str(exc))}")
 
     def _handle_command(self, raw_cmd: str, chat_id: Any) -> None:
-        """Dispatches an allowlisted command safely."""
-        clean_cmd = raw_cmd.strip().split()[0].lower()
+        """Dispatches an allowlisted command safely with modular routing."""
+        parts = raw_cmd.strip().split(maxsplit=1)
+        cmd_token = parts[0].lower() if parts else ""
+        cmd_arg = parts[1].strip() if len(parts) > 1 else ""
+
         # Strip bot username suffix if present (e.g., /status@bot_name -> /status)
-        if "@" in clean_cmd:
-            clean_cmd = clean_cmd.split("@")[0]
+        if "@" in cmd_token:
+            cmd_token = cmd_token.split("@")[0]
 
-        logger.info(f"Processing remote command '{clean_cmd}' from chat {mask_chat_id(chat_id)}")
+        logger.info(f"Processing remote command '{cmd_token}' from chat {mask_chat_id(chat_id)}")
 
-        if clean_cmd == "/status":
+        # ----------------- SYSTEM TELEMETRY -----------------
+        if cmd_token == "/status":
             output = execute_status()
             send_telegram_message(output, chat_id=chat_id)
             log_command_audit("/status", chat_id, is_authorized_user=True, result="SUCCESS")
 
-        elif clean_cmd == "/location":
+        elif cmd_token == "/cpu":
+            output = execute_cpu()
+            send_telegram_message(output, chat_id=chat_id)
+            log_command_audit("/cpu", chat_id, is_authorized_user=True, result="SUCCESS")
+
+        elif cmd_token == "/ram":
+            output = execute_ram()
+            send_telegram_message(output, chat_id=chat_id)
+            log_command_audit("/ram", chat_id, is_authorized_user=True, result="SUCCESS")
+
+        elif cmd_token == "/disk":
+            output = execute_disk()
+            send_telegram_message(output, chat_id=chat_id)
+            log_command_audit("/disk", chat_id, is_authorized_user=True, result="SUCCESS")
+
+        elif cmd_token == "/battery":
+            output = execute_battery()
+            send_telegram_message(output, chat_id=chat_id)
+            log_command_audit("/battery", chat_id, is_authorized_user=True, result="SUCCESS")
+
+        elif cmd_token == "/uptime":
+            output = execute_uptime()
+            send_telegram_message(output, chat_id=chat_id)
+            log_command_audit("/uptime", chat_id, is_authorized_user=True, result="SUCCESS")
+
+        elif cmd_token == "/system":
+            output = execute_system()
+            send_telegram_message(output, chat_id=chat_id)
+            log_command_audit("/system", chat_id, is_authorized_user=True, result="SUCCESS")
+
+        elif cmd_token == "/network":
+            output = execute_network()
+            send_telegram_message(output, chat_id=chat_id)
+            log_command_audit("/network", chat_id, is_authorized_user=True, result="SUCCESS")
+
+        elif cmd_token == "/wifi":
+            output = execute_wifi()
+            send_telegram_message(output, chat_id=chat_id)
+            log_command_audit("/wifi", chat_id, is_authorized_user=True, result="SUCCESS")
+
+        elif cmd_token == "/location":
             output = execute_location()
             send_telegram_message(output, chat_id=chat_id)
             log_command_audit("/location", chat_id, is_authorized_user=True, result="SUCCESS")
 
-        elif clean_cmd == "/lock":
+        # ----------------- SECURITY & MONITORING -----------------
+        elif cmd_token == "/sessions":
+            output = execute_sessions()
+            send_telegram_message(output, chat_id=chat_id)
+            log_command_audit("/sessions", chat_id, is_authorized_user=True, result="SUCCESS")
+
+        elif cmd_token == "/security":
+            output = execute_security()
+            send_telegram_message(output, chat_id=chat_id)
+            log_command_audit("/security", chat_id, is_authorized_user=True, result="SUCCESS")
+
+        elif cmd_token == "/events":
+            output = execute_events()
+            send_telegram_message(output, chat_id=chat_id)
+            log_command_audit("/events", chat_id, is_authorized_user=True, result="SUCCESS")
+
+        elif cmd_token == "/audit":
+            output = execute_audit()
+            send_telegram_message(output, chat_id=chat_id)
+            log_command_audit("/audit", chat_id, is_authorized_user=True, result="SUCCESS")
+
+        elif cmd_token == "/lastboot":
+            output = execute_lastboot()
+            send_telegram_message(output, chat_id=chat_id)
+            log_command_audit("/lastboot", chat_id, is_authorized_user=True, result="SUCCESS")
+
+        elif cmd_token == "/health":
+            output = execute_health()
+            send_telegram_message(output, chat_id=chat_id)
+            log_command_audit("/health", chat_id, is_authorized_user=True, result="SUCCESS")
+
+        elif cmd_token == "/version":
+            output = execute_version()
+            send_telegram_message(output, chat_id=chat_id)
+            log_command_audit("/version", chat_id, is_authorized_user=True, result="SUCCESS")
+
+        # ----------------- POWER CONTROLS -----------------
+        elif cmd_token == "/lock":
             output = execute_lock()
             send_telegram_message(output, chat_id=chat_id)
             res_str = "SUCCESS" if "✅" in output else "FAILED"
             log_command_audit("/lock", chat_id, is_authorized_user=True, result=res_str, reason=output if res_str == "FAILED" else None)
 
-        elif clean_cmd == "/shutdown":
+        elif cmd_token == "/shutdown":
             prompt = execute_shutdown_request(chat_id)
             send_telegram_message(prompt, chat_id=chat_id)
             log_command_audit("/shutdown", chat_id, is_authorized_user=True, result="SUCCESS")
 
-        elif clean_cmd == "/confirm_shutdown":
+        elif cmd_token == "/confirm_shutdown":
             accepted, msg = execute_confirm_shutdown(chat_id)
             send_telegram_message(msg, chat_id=chat_id)
-            log_command_audit("/confirm_shutdown", chat_id, is_authorized_user=True, result="SUCCESS" if accepted else "FAILED", reason=msg if not accepted else None)
+            log_command_audit(
+                "/confirm_shutdown",
+                chat_id,
+                is_authorized_user=True,
+                result="SUCCESS" if accepted else "FAILED",
+                reason=msg if not accepted else None
+            )
 
-        elif clean_cmd == "/screenshot":
+        elif cmd_token == "/restart":
+            prompt = execute_restart_request(chat_id)
+            send_telegram_message(prompt, chat_id=chat_id)
+            log_command_audit("/restart", chat_id, is_authorized_user=True, result="SUCCESS")
+
+        elif cmd_token == "/confirm_restart":
+            accepted, msg = execute_confirm_restart(chat_id)
+            send_telegram_message(msg, chat_id=chat_id)
+            log_command_audit(
+                "/confirm_restart",
+                chat_id,
+                is_authorized_user=True,
+                result="SUCCESS" if accepted else "FAILED",
+                reason=msg if not accepted else None
+            )
+
+        # ----------------- SAFE FILE OPERATIONS -----------------
+        elif cmd_token == "/find":
+            output = execute_find(cmd_arg)
+            send_telegram_message(output, chat_id=chat_id)
+            res_str = "FAILED" if output.startswith("❌") else "SUCCESS"
+            log_command_audit("/find", chat_id, is_authorized_user=True, result=res_str, reason=output if res_str == "FAILED" else None)
+
+        elif cmd_token == "/list":
+            output = execute_list(cmd_arg)
+            send_telegram_message(output, chat_id=chat_id)
+            res_str = "FAILED" if output.startswith("❌") else "SUCCESS"
+            log_command_audit("/list", chat_id, is_authorized_user=True, result=res_str, reason=output if res_str == "FAILED" else None)
+
+        elif cmd_token == "/fileinfo":
+            output = execute_fileinfo(cmd_arg)
+            send_telegram_message(output, chat_id=chat_id)
+            res_str = "FAILED" if output.startswith("❌") else "SUCCESS"
+            log_command_audit("/fileinfo", chat_id, is_authorized_user=True, result=res_str, reason=output if res_str == "FAILED" else None)
+
+        elif cmd_token == "/open":
+            output = execute_open(cmd_arg)
+            send_telegram_message(output, chat_id=chat_id)
+            res_str = "FAILED" if output.startswith("❌") else "SUCCESS"
+            log_command_audit("/open", chat_id, is_authorized_user=True, result=res_str, reason=output if res_str == "FAILED" else None)
+
+        # ----------------- NETWORK DIAGNOSTICS -----------------
+        elif cmd_token == "/ping":
+            output = execute_ping()
+            send_telegram_message(output, chat_id=chat_id)
+            log_command_audit("/ping", chat_id, is_authorized_user=True, result="SUCCESS")
+
+        elif cmd_token == "/publicip":
+            output = execute_publicip()
+            send_telegram_message(output, chat_id=chat_id)
+            log_command_audit("/publicip", chat_id, is_authorized_user=True, result="SUCCESS")
+
+        # ----------------- AGENT LIFECYCLE -----------------
+        elif cmd_token == "/agent":
+            output = execute_agent()
+            send_telegram_message(output, chat_id=chat_id)
+            log_command_audit("/agent", chat_id, is_authorized_user=True, result="SUCCESS")
+
+        elif cmd_token == "/restart_agent":
+            output = execute_restart_agent()
+            send_telegram_message(output, chat_id=chat_id)
+            log_command_audit("/restart_agent", chat_id, is_authorized_user=True, result="SUCCESS")
+
+        # ----------------- SENSORY / EXISTING -----------------
+        elif cmd_token == "/screenshot":
             temp_path = None
             try:
                 temp_path, caption_or_err = execute_screenshot()
@@ -138,12 +409,12 @@ class CommandEngine:
                     except Exception as e:
                         logger.warning(f"Could not remove temp screenshot: {sanitize(str(e))}")
 
-        elif clean_cmd == "/processes":
+        elif cmd_token == "/processes":
             output = execute_processes()
             send_telegram_message(output, chat_id=chat_id)
             log_command_audit("/processes", chat_id, is_authorized_user=True, result="SUCCESS")
 
-        elif clean_cmd == "/camera":
+        elif cmd_token == "/camera":
             temp_path = None
             try:
                 temp_path, caption_or_err = execute_camera()
@@ -164,32 +435,18 @@ class CommandEngine:
                     except Exception as e:
                         logger.warning(f"Could not remove temp photo: {sanitize(str(e))}")
 
-        elif clean_cmd in ["/help", "/start"]:
-            help_text = (
-                "🛡️ <b>SENTINEL REMOTE COMMANDS</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━━━\n"
-                "/status — Telemetry, CPU, RAM, battery, OS, uptime\n"
-                "/location — Multi-tier GPS & approximate IP location\n"
-                "/lock — Instantly lock Windows workstation\n"
-                "/shutdown — 2-step confirmed system shutdown\n"
-                "/screenshot — Capture current desktop screenshot\n"
-                "/processes — List top 20 active processes\n"
-                "/camera — Explicitly consent-based single photo\n"
-                "/help — Show this reference\n"
-                "━━━━━━━━━━━━━━━━━━━━━━\n"
-                "🔒 <i>Strict single-user authorization & audit active.</i>"
-            )
-            send_telegram_message(help_text, chat_id=chat_id)
-            log_command_audit(clean_cmd, chat_id, is_authorized_user=True, result="SUCCESS")
+        elif cmd_token in ["/help", "/start"]:
+            send_telegram_message(HELP_TEXT, chat_id=chat_id)
+            log_command_audit(cmd_token, chat_id, is_authorized_user=True, result="SUCCESS")
 
         else:
             # Unknown command rejected
             msg = (
-                f"❌ Unknown command: <code>{clean_cmd}</code>\n"
+                f"❌ Unknown command: <code>{sanitize(cmd_token)}</code>\n"
                 "Send /help to view all allowlisted commands."
             )
             send_telegram_message(msg, chat_id=chat_id)
-            log_command_audit(clean_cmd, chat_id, is_authorized_user=True, result="REJECTED", reason="Command not in allowlist")
+            log_command_audit(cmd_token, chat_id, is_authorized_user=True, result="REJECTED", reason="Command not in allowlist")
 
     def process_update(self, update: Dict[str, Any]) -> None:
         """Processes an incoming Telegram update with strict authorization and deduplication."""
