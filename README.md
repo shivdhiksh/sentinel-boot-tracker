@@ -103,7 +103,7 @@ Sentinel provides an allowlisted Telegram remote command engine with zero arbitr
 #### 📸 Sensory & Interactive
 * `/screenshot` — Captures primary display desktop screenshot. Strictly restricted to active interactive console sessions (rejected in Session 0 / SYSTEM context).
 * `/processes` — Lists top 20 active processes sorted by RAM usage. Command-line arguments are omitted to prevent credential leaks.
-* `/camera` — Captures a single webcam photo only after explicit local user consent via a dedicated GUI banner dialog.
+* `/camera` — Captures a single webcam photo automatically once opted in by the laptop owner. Displays a visible on-screen active indicator during capture; no repeated Allow/Deny clicks required. Disabled by default.
 * `/help` / `/start` — Comprehensive command reference detailing syntax, confirmation requirements, and security gates.
 
 ---
@@ -116,8 +116,8 @@ Sentinel provides an allowlisted Telegram remote command engine with zero arbitr
 4. **Restricted Filesystem Roots:** File operations are strictly locked to approved directories (`BASE_DIR`, `Desktop`, `Documents`, `Downloads`). All paths are resolved canonicalized; directory traversal (`..`) is hard-blocked.
 5. **Metadata-Only File Inspection:** `/fileinfo` inspects `os.stat` only. File contents, environment variables, and secrets are never read or transmitted.
 6. **2-Step Power State Confirmation:** Both `/shutdown` and `/restart` require 2-step confirmation bound to the requesting chat ID with a monotonic 30-second TTL.
-7. **Interactive Console Gating:** Desktop screenshots and Explorer folder launches strictly verify `ProcessIdToSessionId != 0` and console session equality.
-8. **Visible Local Consent for Camera:** `/camera` spawns an isolated PySide6 consent banner on the local screen. Hardware capture proceeds only if the local user explicitly clicks "Allow".
+7. **Interactive Console Gating:** Desktop screenshots and camera captures strictly verify `ProcessIdToSessionId != 0` and console session equality (blocks Session 0 / SYSTEM context).
+8. **Persistent Local Opt-In for Remote Camera:** `/camera` requires explicit opt-in by the laptop owner via the local CLI (`py power_monitor.py camera-enable`). It is disabled by default. Once opted in, `/camera` automatically captures exactly one frame without per-request popups while always displaying a visible on-screen banner ("🔴 WEBCAM ACTIVE") on the user's desktop. Remote commands cannot enable the camera.
 9. **Credential-Safe Wi-Fi Telemetry:** Wi-Fi queries strictly inspect interface telemetry (`netsh wlan show interfaces`). Password exports (`key=clear`) are strictly prohibited.
 10. **Single-Instance Mutex & Decoupled Daemon:** Uses native Win32 mutex `SentinelSessionMonitor_<username>` with `CREATE_BREAKAWAY_FROM_JOB` to prevent Task Scheduler premature termination.
 
@@ -131,6 +131,7 @@ sentinel-boot-tracker/
 ├── sentinel/                     # Modular Sentinel Engine
 │   ├── __init__.py               # Package metadata and version info (0.5.0)
 │   ├── config.py                 # Configuration, logging, secret redaction, chat masking
+│   ├── settings.py               # Local persistent settings (Remote Camera Opt-In)
 │   ├── command_engine.py         # Telegram polling, update deduplication & router
 │   ├── command_auth.py           # Sender authorization & Win32 console session validation
 │   ├── command_audit.py          # Structured, sanitized remote-command audit logging
@@ -141,7 +142,7 @@ sentinel-boot-tracker/
 │   ├── network_actions.py        # /ping, /publicip, /network, /wifi (credential-safe)
 │   ├── agent_actions.py          # /agent, /restart_agent (decoupled lifecycle controls)
 │   ├── remote_actions.py         # v0.4 sensory actions (/status, /location, /screenshot, /processes, /camera)
-│   ├── consent_camera.py         # Isolated local GUI consent dialog for webcam capture
+│   ├── consent_camera.py         # Isolated camera helper with visible on-screen active indicator
 │   ├── location.py               # 3-Tier Geolocation Engine & 1h cache manager
 │   ├── session_monitor.py        # Win32 WTSRegisterSessionNotification daemon
 │   ├── system_info.py            # Battery status, OS, username, and device info
@@ -211,6 +212,24 @@ sentinel-boot-tracker/
    ```powershell
    py power_monitor.py session_monitor
    ```
+
+5. **Configure Remote Camera (Owner Local Opt-In):**
+   Remote Camera is **disabled by default** to protect owner privacy. The laptop owner can enable, inspect, or immediately disable it locally at any time:
+   ```powershell
+   # Enable automatic camera capture for authorized /camera requests:
+   py power_monitor.py camera-enable
+
+   # Check current camera opt-in status:
+   py power_monitor.py camera-status
+
+   # Immediately disable remote camera capture:
+   py power_monitor.py camera-disable
+   ```
+   * **No Repeated Popup:** Once enabled locally, authorized `/camera` commands capture exactly one photo automatically without requiring an "Allow" click on every request.
+   * **Visible Active Indicator:** While the camera hardware is initializing and capturing (~900ms), a prominent on-screen banner (`🔴 WEBCAM ACTIVE`) is displayed on the user's desktop.
+   * **Windows OS & Privacy Controls:** Sentinel respects Windows camera permissions and restricts execution strictly to interactive user console sessions (rejecting Session 0 / SYSTEM calls).
+   * **Data Cleanup:** Captured images are deleted immediately from disk after upload attempts (on success, transmission failure, camera driver errors, or timeouts).
+   * **Local Admin Only:** Remote Camera can only be enabled locally from the laptop terminal. Telegram commands cannot enable the feature remotely.
 
 ---
 

@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 .location_cache.json
 .update_state.json
+.settings.json

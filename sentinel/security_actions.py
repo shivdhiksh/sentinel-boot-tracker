@@ -24,6 +24,7 @@ from .command_auth import (
 )
 from .system_info import get_username, get_os_info
 from .location import is_system_context, load_location_cache
+from .settings import is_remote_camera_enabled
 
 
 def execute_sessions() -> str:
@@ -83,6 +84,7 @@ def execute_security() -> str:
         f"📋 <b>Command Allowlist:</b> <code>{allowlist_count} allowed commands</code>",
         f"🛡️ <b>Update Deduplication:</b> Active (Bounded History)",
         f"🖥️ <b>Interactive Session Gate:</b> {'Active (User Console)' if is_interactive else 'Restricted'}",
+        f"📷 <b>Remote Camera Opt-In:</b> {'🟢 Enabled (Owner Opt-In)' if is_remote_camera_enabled() else '🔴 Disabled (Opt-In Required)'}",
         f"📁 <b>Restricted Filesystem Roots:</b> Enforced (Zero Traversal)",
         f"📝 <b>Command Audit Logging:</b> Active ({LOG_FILE.name})",
         f"🛑 <b>Token & Secret Redaction:</b> Active ([REDACTED_TOKEN])",
@@ -311,6 +313,14 @@ def execute_health() -> str:
         checks.append(("Location Cache", "INFO", f"Expired ({cached_loc.get('age_string')})"))
     else:
         checks.append(("Location Cache", "INFO", "No cached location file"))
+
+    # 7. Remote Camera Opt-In Posture
+    from .settings import is_remote_camera_enabled
+    cam_opt = is_remote_camera_enabled()
+    if cam_opt:
+        checks.append(("Remote Camera", "PASS", "Enabled by owner opt-in"))
+    else:
+        checks.append(("Remote Camera", "INFO", "Disabled (Local owner opt-in required)"))
 
     # Calculate overall health
     has_fail = any(s == "FAIL" for _, s, _ in checks)

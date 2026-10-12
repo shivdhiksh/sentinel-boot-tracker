@@ -19,6 +19,17 @@ except Exception as e:
     sys.exit(1)
 
 if __name__ == "__main__":
+    if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+    if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+        try:
+            sys.stderr.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
     action = sys.argv[1].strip().lower() if len(sys.argv) > 1 else "startup"
     
     is_sys = is_system_context()
@@ -43,6 +54,31 @@ if __name__ == "__main__":
     elif action == "startup":
         send_telegram_alert("startup")
         ensure_session_monitor_running()
+    elif action in ["camera-enable", "enable-camera"]:
+        from sentinel.settings import set_remote_camera_enabled
+        if set_remote_camera_enabled(True):
+            print("[+] Sentinel Remote Camera: ENABLED")
+            print("Authorized Telegram /camera requests will now capture a single photo automatically.")
+            print("An on-screen active indicator will visibly display on your desktop during capture.")
+        else:
+            print("[-] Failed to update Remote Camera setting.")
+            sys.exit(1)
+    elif action in ["camera-disable", "disable-camera"]:
+        from sentinel.settings import set_remote_camera_enabled
+        if set_remote_camera_enabled(False):
+            print("[*] Sentinel Remote Camera: DISABLED")
+            print("All incoming Telegram /camera requests will be safely rejected.")
+        else:
+            print("[-] Failed to update Remote Camera setting.")
+            sys.exit(1)
+    elif action in ["camera-status", "status-camera"]:
+        from sentinel.settings import get_camera_settings_summary
+        summary = get_camera_settings_summary()
+        enabled = summary["remote_camera_enabled"]
+        updated = summary["updated_at"]
+        tag = "[ENABLED]" if enabled else "[DISABLED]"
+        print(f"{tag} Remote Camera: {'Enabled (Automatic capture active)' if enabled else 'Disabled (Opt-in required)'}")
+        print(f"[*] Last Modified: {updated}")
     elif action in ["shutdown", "lock", "unlock"]:
         send_telegram_alert(action)
     else:

@@ -155,6 +155,21 @@ def test_execute_camera_timeout():
     new_cam_files = [f for f in (after_files - before_files) if f.startswith("sentinel_cam_")]
     assert len(new_cam_files) == 0, f"Leaked temporary camera files found: {new_cam_files}"
 
+def test_execute_camera_disabled_flow():
+    """[UNIT] Verifies camera request is cleanly rejected when Remote Camera is disabled."""
+    with patch("sentinel.remote_actions.is_remote_camera_enabled", return_value=False):
+        temp_path, msg = execute_camera()
+        assert temp_path is None
+        assert "Remote Camera is disabled" in msg
+        assert "camera-enable" in msg
+
+def test_execute_camera_concurrent_rejection():
+    """[UNIT] Verifies second overlapping camera capture is blocked without crashing."""
+    with patch("sentinel.remote_actions._camera_in_progress", True):
+        temp_path, msg = execute_camera()
+        assert temp_path is None
+        assert "already in progress" in msg
+
 def test_execute_processes_real_e2e():
     """[REAL E2E] Verifies process summary collects PID/Name/RAM/CPU and excludes cmdline."""
     output = execute_processes()

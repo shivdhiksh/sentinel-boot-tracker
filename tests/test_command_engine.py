@@ -188,5 +188,5 @@ def test_command_engine_help_text():
     assert "/agent" in HELP_TEXT
     assert "/restart_agent" in HELP_TEXT
     assert "Requires 2-step confirmation" in HELP_TEXT
-    assert "Requires local user GUI consent" in HELP_TEXT
+    assert "Requires local owner opt-in" in HELP_TEXT
     assert "Interactive session only" in HELP_TEXT

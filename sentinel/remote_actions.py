@@ -25,10 +25,15 @@ from .system_info import get_battery_info, get_os_info
 from .network import get_network_info
 from .location import get_location_telemetry, load_location_cache
 from .command_auth import verify_interactive_session
+from .settings import is_remote_camera_enabled
 
 # Thread-safe in-memory state for 2-step shutdown confirmation
 _shutdown_lock = threading.Lock()
 _pending_shutdown: Optional[Dict[str, Any]] = None
+
+# Thread-safe camera concurrency lock
+_camera_lock = threading.Lock()
+_camera_in_progress = False
 
 def execute_status() -> str:
     """Gathers comprehensive Sentinel and device status."""
@@ -312,56 +317,90 @@ def execute_processes() -> str:
 
 def execute_camera(test_mode: Optional[str] = None) -> Tuple[Optional[str], str]:
     """
-    Executes consent-based camera capture.
-    Enforces process session ID != 0 and == active interactive console session.
-    Spawns sentinel.consent_camera as an isolated UI subprocess in the user session.
+    Executes Remote Camera capture:
+    1. Enforces concurrency protection (rejects overlapping captures).
+    2. Validates that the owner has explicitly opted in to Remote Camera in settings.
+    3. Enforces process session ID != 0 and == active interactive console session.
+    4. Spawns sentinel.consent_camera with --auto to display the visible on-screen
+       active indicator, verify hardware access, capture exactly 1 frame, and release.
     Returns (temp_image_path, caption_or_error_message).
     """
-    valid, reason = verify_interactive_session()
-    if not valid:
-        return None, f"❌ Camera rejected: {reason}"
+    global _camera_in_progress
+    with _camera_lock:
+        if _camera_in_progress:
+            return None, "⚠️ Camera capture already in progress. Please wait."
+        _camera_in_progress = True
 
-    fd, temp_path = tempfile.mkstemp(suffix=".jpg", prefix="sentinel_cam_")
-    os.close(fd)
-
-    success = False
     try:
-        python_exe = sys.executable
-        cmd = [python_exe, "-m", "sentinel.consent_camera", temp_path, "--timeout", "30"]
-        if test_mode:
-            cmd.extend(["--test-mode", test_mode])
+        # Enforce persistent opt-in check (Defense in depth)
+        if not is_remote_camera_enabled() and test_mode not in ["deny", "timeout"]:
+            return None, (
+                "⚠️ <b>Remote Camera is disabled.</b>\n"
+                "The laptop owner must explicitly enable it locally before remote captures are permitted.\n"
+                "Run <code>py power_monitor.py camera-enable</code> in the laptop terminal."
+            )
 
-        proc = subprocess.run(
-            cmd,
-            cwd=str(BASE_DIR),
-            capture_output=True,
-            text=True,
-            timeout=40
-        )
+        # Enforce interactive session (never run in Session 0)
+        valid, reason = verify_interactive_session()
+        if not valid:
+            return None, f"❌ Camera rejected: {reason}"
 
-        exit_code = proc.returncode
-        if exit_code == 0:
-            if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
-                success = True
-                return temp_path, "📷 <b>Camera Snapshot</b> (Explicitly Approved)"
+        fd, temp_path = tempfile.mkstemp(suffix=".jpg", prefix="sentinel_cam_")
+        os.close(fd)
+
+        success = False
+        try:
+            python_exe = sys.executable
+            cmd = [python_exe, "-m", "sentinel.consent_camera", temp_path, "--auto"]
+            if test_mode:
+                cmd.extend(["--test-mode", test_mode])
+
+            proc = subprocess.run(
+                cmd,
+                cwd=str(BASE_DIR),
+                capture_output=True,
+                text=True,
+                timeout=25
+            )
+
+            exit_code = proc.returncode
+            if exit_code == 0:
+                if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                    success = True
+                    return temp_path, "📷 <b>Camera Snapshot</b> (Remote Authorized Capture)"
+                else:
+                    return None, "❌ Camera error: Captured file was empty."
+            elif exit_code == 1:
+                return None, "⚠️ Camera capture declined: Local user clicked Deny."
+            elif exit_code == 2:
+                return None, "⚠️ Camera request timed out without local user consent."
+            elif exit_code == 4:
+                return None, (
+                    "⚠️ <b>Remote Camera is disabled.</b>\n"
+                    "The laptop owner must explicitly enable it locally before remote captures are permitted.\n"
+                    "Run <code>py power_monitor.py camera-enable</code> in the laptop terminal."
+                )
+            elif exit_code == 5:
+                return None, "❌ Camera rejected: Interactive desktop session unavailable (Session 0)."
             else:
-                return None, "❌ Camera error: Captured file was empty."
-        elif exit_code == 1:
-            return None, "⚠️ Camera capture declined: Local user clicked Deny."
-        elif exit_code == 2:
-            return None, "⚠️ Camera request timed out without local user consent."
-        else:
-            err_output = proc.stdout.strip() or proc.stderr.strip() or f"Exit code {exit_code}"
-            return None, f"❌ Camera hardware/driver error: {sanitize(err_output)}"
+                err_output = proc.stdout.strip() or proc.stderr.strip() or f"Exit code {exit_code}"
+                for line in err_output.splitlines():
+                    if "ERROR:" in line:
+                        clean_err = line.split("ERROR:", 1)[1].strip()
+                        return None, f"❌ Camera hardware/driver error: {sanitize(clean_err)}"
+                return None, f"❌ Camera hardware/driver error: {sanitize(err_output)}"
 
-    except subprocess.TimeoutExpired:
-        return None, "⚠️ Camera request timed out."
-    except Exception as exc:
-        return None, f"❌ Camera exception: {sanitize(str(exc))}"
+        except subprocess.TimeoutExpired:
+            return None, "⚠️ Camera request timed out."
+        except Exception as exc:
+            return None, f"❌ Camera exception: {sanitize(str(exc))}"
+        finally:
+            # Clean up temp file immediately if capture did not succeed
+            if not success and temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception as exc:
+                    logger.warning(f"Could not remove temp camera file: {sanitize(str(exc))}")
     finally:
-        # If capture was not successful or an error/denial occurred, remove temp file immediately
-        if not success and temp_path and os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except Exception as exc:
-                logger.warning(f"Could not remove temp camera file: {sanitize(str(exc))}")
+        with _camera_lock:
+            _camera_in_progress = False

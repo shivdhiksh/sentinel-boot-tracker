@@ -157,7 +157,7 @@ HELP_TEXT = (
     "📸 <b>SENSORY & PROCESSES:</b>\n"
     "• <code>/screenshot</code> — Desktop screenshot <i>[Interactive session only]</i>\n"
     "• <code>/processes</code> — Top 20 processes by memory\n"
-    "• <code>/camera</code> — Single snapshot <i>[Requires local user GUI consent]</i>\n"
+    "• <code>/camera</code> — Single snapshot <i>[Requires local owner opt-in; no per-request popup]</i>\n"
     "• <code>/help</code> — Show this command reference\n"
     "━━━━━━━━━━━━━━━━━━━━━━\n"
     "🔒 <i>Strict single-user authorization & audit active.</i>"
@@ -427,7 +427,8 @@ class CommandEngine:
                         log_command_audit("/camera", chat_id, is_authorized_user=True, result="FAILED", reason="Transmission error")
                 else:
                     send_telegram_message(caption_or_err, chat_id=chat_id)
-                    log_command_audit("/camera", chat_id, is_authorized_user=True, result="FAILED", reason=caption_or_err)
+                    audit_res = "REJECTED" if ("disabled" in caption_or_err.lower() or "rejected" in caption_or_err.lower()) else "FAILED"
+                    log_command_audit("/camera", chat_id, is_authorized_user=True, result=audit_res, reason=caption_or_err)
             finally:
                 if temp_path and os.path.exists(temp_path):
                     try:
